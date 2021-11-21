@@ -11,7 +11,7 @@ uint8_t PeerMac[6] = {0x24, 0x6F, 0x28, 0x17, 0xC1, 0x9C};
 #define DO_MOTORS
 
 #ifdef DO_MOTORS
-#define RIGHT_PWM_PIN 21
+// #define RIGHT_PWM_PIN 21
 // #define RIGHT_FORWARD_PIN 19
 // #define RIGHT_REVERSE_PIN 18
 // #define LEFT_PWM_PIN 17
@@ -44,11 +44,13 @@ struct StateMsg
   int16_t LeftSpeed;
   int16_t RightSpeed;
   int16_t TurretTurnSpeed;
-  uint16_t TurretTiltPos;
+  int16_t TurretTiltSpeed;
   uint8_t ChargePressed;
   uint8_t TriggerPressed;
+  uint8_t PowerLevel;
 };
 StateMsg gState;
+
 const float MaxAccel = 512.0;
 float LeftSpeed = 0;
 float RightSpeed = 0;
@@ -105,7 +107,7 @@ void setup() {
   gState.LeftSpeed = 0;
   gState.RightSpeed = 0;
   gState.TurretTurnSpeed = 0;
-  gState.TurretTiltPos = 0;
+  gState.TurretTiltSpeed = 0;
   gState.ChargePressed = 0;
   gState.TriggerPressed = 0;
 

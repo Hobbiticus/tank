@@ -39,8 +39,8 @@ struct StateMsg
   int16_t TurretTiltSpeed;
   uint8_t ChargePressed;
   uint8_t TriggerPressed;
+  uint8_t PowerLevel;
 };
-uint8_t PowerLevel;
 
 //tank -> RC
 struct StatusMsg
@@ -346,7 +346,7 @@ void setup()
   gState.TurretTiltSpeed = 0;
   gState.ChargePressed = 0;
   gState.TriggerPressed = 0;
-  PowerLevel = 0;
+  gState.PowerLevel = 0;
   gLastSendTime = micros() - UpdateTimeMS * 1000;
   gLastState = gState;
 }
@@ -437,16 +437,15 @@ void loop()
   
   ////Serial.println("x = " + String(linear_x) + ", y = " + String(linear_y));
   ////Serial.println("Left = " + String(left) + ", Right = " + String(right));
+  gState.ChargePressed = charge;
+  gState.TriggerPressed = trigger;
 
   gState.LeftSpeed = left;
   gState.RightSpeed = right;
   gState.TurretTurnSpeed = StickToLinear(pan, PAN_MIN, PAN_MAX, PAN_DEAD_MIN, PAN_DEAD_MAX);
   gState.TurretTiltSpeed = StickToLinear(tilt, TILT_STICK_MIN, TILT_STICK_MAX, TILT_DEAD_MIN, TILT_DEAD_MAX);
-  PowerLevel = map(pot, 0, 4095, 255, 0);
-  Serial.println("X: " + String(linear_x) + "; Y: " + String(linear_y) + "; Pan: " + String(gState.TurretTurnSpeed) + "; Tilt: " + String(gState.TurretTiltSpeed) + "; Power = " + String(PowerLevel));
-
-  gState.ChargePressed = charge;
-  gState.TriggerPressed = trigger;
+  gState.PowerLevel = map(pot, 0, 4095, 255, 0);
+  Serial.println("X: " + String(linear_x) + "; Y: " + String(linear_y) + "; Pan: " + String(gState.TurretTurnSpeed) + "; Tilt: " + String(gState.TurretTiltSpeed) + "; Power = " + String(gState.PowerLevel));
 
   //only send an update if something changed or it's been too long since the last update
   if (memcmp(&gState, &gLastState, sizeof(gState)) != 0 || micros() - gLastSendTime > SparseUpdateFrequencyUS)

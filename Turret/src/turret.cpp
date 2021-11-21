@@ -8,8 +8,18 @@
 typedef void (*ITimer_Callback) ();
 
 #define ENABLE_DEBUGGING
-#define USE_SENSORS
+//#define USE_SENSORS
 #define STAGE_COUNT 1
+#define CALIBRATION_MODE
+
+#ifndef CALIBRATION_MODE
+const
+#endif
+unsigned int LoaderLoadPos = 5;
+#ifndef CALIBRATION_MODE
+const
+#endif
+unsigned int LoaderReadyPos = 144;
 
 //...in microseconds
 #ifdef USE_SENSORS
@@ -33,12 +43,27 @@ VoltageToTiming Stage1OnTiming[5] =
   {140, 1000},
   {170, 1000}
 };
+VoltageToTiming Stage2OnTiming[5] =
+{
+  {50, 1000},
+  {80, 1000},
+  {110, 1000},
+  {140, 1000},
+  {170, 1000}
+};
 
 unsigned int Stage1OnTime = 5000;
 #if STAGE_COUNT > 1
 unsigned int Stage2OnTime = 15000;
 #endif
 #endif
+
+#ifdef CALIBRATION_MODE
+unsigned int* StageTiming = &Stage1OnTime;
+//unsigned int TimingVoltageIndex = 0;
+//VoltageToTiming* TimingStage = Stage1OnTiming;
+#endif
+
 
 class IRQTimer
 {
@@ -118,6 +143,7 @@ struct StateMsg
   int16_t TurretTiltSpeed;
   uint8_t ChargePressed;
   uint8_t TriggerPressed;
+  uint8_t PowerLevel;
 };
 
 //tank -> RC
@@ -214,7 +240,7 @@ void OnTrigger()
     Charging = false;
     digitalWrite(CHARGE_PIN, LOW);
   }
-  loader.write(180);
+  loader.write(LoaderReadyPos);
   
   StatusMsg msg;
   msg.ChargeState = false;
@@ -247,7 +273,7 @@ void OnCharge()
     StatusMsg msg;
     msg.ChargeState = Charging;
     esp_now_send(PeerMac, (uint8_t*)&msg, sizeof(msg));
-    loader.write(5);
+    loader.write(LoaderLoadPos);
   }
   
   if (!Charging)
@@ -340,6 +366,30 @@ void OnDataRecv(const uint8_t * mac, const uint8_t *incomingData, int len)
     gState.TurretTiltSpeed = msg->TurretTiltSpeed;
     Serial.println("Tilt speed is now " + String(gState.TurretTiltSpeed));
   }
+  if (msg->PowerLevel != gState.PowerLevel)
+  {
+    gState.PowerLevel = msg->PowerLevel;
+  }
+#ifdef CALIBRATION_MODE
+  // static bool EverLoaded = false;
+  // if (!EverLoaded && !msg->ChargePressed)
+  // {
+  //   LoaderReadyPos = map(gState.PowerLevel, 0, 255, 180, 120);
+  //   Serial.println(String(gState.PowerLevel) + " = Ready pos = " + String(LoaderReadyPos));
+  //   DebugPrint(String(gState.PowerLevel) + " = Ready pos = " + String(LoaderReadyPos));
+  //   loader.write(LoaderReadyPos);
+  // }
+  // if (msg->ChargePressed)
+  //   EverLoaded = true;
+  //set the position of the loader based on the "power level"
+  if (Charging)
+  {
+    LoaderLoadPos = map(gState.PowerLevel, 0, 255, 80, 5);
+    Serial.println("Load pos = " + String(LoaderLoadPos));
+    DebugPrint("Load pos = " + String(LoaderLoadPos));
+    loader.write(LoaderLoadPos);
+  }
+#endif
   if (msg->ChargePressed != gState.ChargePressed)
   {
     gState.ChargePressed = msg->ChargePressed;
@@ -443,7 +493,7 @@ void setup() {
   servo.attach(TILT_PIN, 500, 2400);
   servo.write(gTiltPos);
   loader.attach(LOADER_PIN, 500, 2400);
-  loader.write(180);
+  loader.write(LoaderReadyPos);
   DischargeCapacitors();
 }
 
@@ -465,7 +515,32 @@ void UpdateServo()
   servo.write((int)gTiltPos);
 }
 
+#ifdef CALIBRATION_MODE
+void UpdateStageDelay()
+{
+  static unsigned int LastUpdateTime = millis();
+  if (millis() - LastUpdateTime < 1000)
+    return;
+  LastUpdateTime += 1000;
+
+  if (gState.TurretTurnSpeed < -220)
+    *StageTiming += 1000;
+  else if (gState.TurretTurnSpeed < -30)
+    *StageTiming += 250;
+  else if (gState.TurretTurnSpeed > 220)
+    *StageTiming -= 1000;
+  else if (gState.TurretTurnSpeed > 30)
+    *StageTiming -= 250;
+  Serial.println("Stage timing = " + String(*StageTiming) + "us");
+  DebugPrint("Stage timing = " + String(*StageTiming) + "us");
+}
+#endif
+
 void loop() {
+#ifdef CALIBRATION_MODE
+  UpdateStageDelay();
+#endif
+
   UpdateServo();
   if (Shutdown)
   {
