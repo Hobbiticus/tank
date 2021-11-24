@@ -9,24 +9,17 @@ typedef void (*ITimer_Callback) ();
 
 #define ENABLE_DEBUGGING
 //#define USE_SENSORS
-#define STAGE_COUNT 1
-#define CALIBRATION_MODE
+#define STAGE_COUNT 2
+//#define CALIBRATION_MODE
 
 #ifndef CALIBRATION_MODE
 const
 #endif
-unsigned int LoaderLoadPos = 5;
+unsigned int LoaderLoadPos = 40;
 #ifndef CALIBRATION_MODE
 const
 #endif
-unsigned int LoaderReadyPos = 144;
-
-//...in microseconds
-#ifdef USE_SENSORS
-const unsigned int Delay_Stage1_Off = 0;
-const unsigned int Delay_Stage2_Off = 0;
-#endif
-unsigned int Delay_Stage2_On = 0;
+unsigned int LoaderReadyPos = 180;
 
 #ifndef USE_SENSORS
 struct VoltageToTiming
@@ -37,29 +30,55 @@ struct VoltageToTiming
 //fill this out!!
 VoltageToTiming Stage1OnTiming[5] =
 {
-  {50, 18000}, //18000 thick, //5000 - 18000 thin
-  {80, 1000},
-  {110, 1000},
-  {140, 1000},
+  {50, 14000}, //14000 thin, 30 deg
+  {80, 10000},
+  {110, 10000}, //10000 thin, 40-50 deg
+  {140, 8000}, //9000 thin, 40 deg
   {170, 1000}
+};
+VoltageToTiming Stage2OffTiming[5] =
+{
+  {50, 0},
+  {80, 0},
+  {110, 0},
+  {140, 0},
+  {170, 0}
 };
 VoltageToTiming Stage2OnTiming[5] =
 {
-  {50, 1000},
-  {80, 1000},
-  {110, 1000},
-  {140, 1000},
+  {50, 4500},
+  {80, 4500},
+  {110, 4500},
+  {140, 4500},  // only real one of this list
+  {170, 4500}
+};
+
+//for 140V!
+VoltageToTiming ChargeTimes[5] =
+{
+  {50, 250000},
+  {80, 500000},
+  {110, 700000},
+  {140, 1100000},
   {170, 1000}
 };
 
-unsigned int Stage1OnTime = 5000;
+unsigned int Stage1OnTime = 8000;
 #if STAGE_COUNT > 1
-unsigned int Stage2OnTime = 15000;
+unsigned int Stage2OnTime = 4500;
 #endif
 #endif
 
+//...in microseconds
+#ifdef USE_SENSORS
+const unsigned int Delay_Stage1_Off = 0;
+const unsigned int Delay_Stage2_Off = 0;
+#endif
+unsigned int Delay_Stage2_On = 0;
+
+
 #ifdef CALIBRATION_MODE
-unsigned int* StageTiming = &Stage1OnTime;
+unsigned int* StageTiming = &Stage2OnTime;
 //unsigned int TimingVoltageIndex = 0;
 //VoltageToTiming* TimingStage = Stage1OnTiming;
 #endif
@@ -116,7 +135,7 @@ void DebugPrint(String str)
 
 
 #define SENSOR_PIN_1 33
-#if STAGE_COUNT > 1
+#if STAGE_COUNT > 1 || defined(CALIBRATION_MODE)
 #define SENSOR_PIN_2 25
 #endif
 
@@ -202,7 +221,10 @@ void IRAM_ATTR TurnOnStage2(void)
 
 void IRAM_ATTR TurnOffStage1(void)
 {
+  if (CurrentStage != 1)
+    return;
   digitalWrite(COIL_PIN_1, LOW);
+  DebugPrint("Turning off stage 1");
 
 #if STAGE_COUNT > 1
   //start next stage
@@ -210,11 +232,9 @@ void IRAM_ATTR TurnOffStage1(void)
   if (Delay_Stage2_On > 0)
   {
     ITimer.SetTimer(Delay_Stage2_On, TurnOnStage2, true);
-    DebugPrint("Turning off stage 1");
     return;
   }
 
-  DebugPrint("Turning off stage 1");
   TurnOnStage2();
 #else
   //no more stages - all done!
@@ -247,7 +267,15 @@ void OnTrigger()
   esp_now_send(PeerMac, (uint8_t*)&msg, sizeof(msg));
 
   DebugPrint("Trigger!");
+#ifdef CALIBRATION_MODE
+  Serial.println("Stage1 on = " + String(*StageTiming) + " us, Stage 2 delay = " + String(Delay_Stage2_On) + " us");
+  DebugPrint("Stage1 on = " + String(*StageTiming) + " us, Stage 2 delay = " + String(Delay_Stage2_On) + " us");
+#endif
+
   LastTriggerTime = when;
+#ifdef CALIBRATION_MODE
+  SensorTime2 = SensorTime1 = 1;
+#endif
   Serial.println("Trigger pushed");
   digitalWrite(BUILTIN_LED, HIGH);
   CurrentStage = 1;
@@ -287,6 +315,28 @@ void OnCharge()
   digitalWrite(CHARGE_PIN, HIGH);
 }
 
+#ifdef CALIBRATION_MODE
+void IRAM_ATTR SensorInterrupt1()
+{
+  int when = micros();
+  if (when - LastSensor1Time < 200 * 1000)
+    return;
+  DebugPrint("Interrupt1! " + String(when));
+  LastSensor1Time = when;
+  SensorTime1 = when;
+}
+
+void IRAM_ATTR SensorInterrupt2()
+{
+  int when = micros();
+  if (when - LastSensor2Time < 200 * 1000)
+    return;
+  DebugPrint("Interrupt2! " + String(when));
+  LastSensor2Time = when;
+  SensorTime2 = when;
+}
+
+#else
 void IRAM_ATTR SensorInterrupt1()
 {
 #ifdef USE_SENSORS
@@ -310,7 +360,7 @@ void IRAM_ATTR SensorInterrupt1()
 #endif
 }
 
-#if STAGE_COUNT > 1
+#if STAGE_COUNT > 1 || defined(CALIBRATION_MODE)
 void IRAM_ATTR SensorInterrupt2()
 {
 #ifdef USE_SENSORS
@@ -320,6 +370,7 @@ void IRAM_ATTR SensorInterrupt2()
   int when = micros();
   if (when - LastSensor2Time < 200 * 1000)
     return;
+  DebugPrint("Interrupt2!");
   LastSensor2Time = when;
   SensorTime2 = when;
 
@@ -334,6 +385,7 @@ void IRAM_ATTR SensorInterrupt2()
 }
 #endif
 
+#endif
 
 void OnDataSent(const uint8_t *mac_addr, esp_now_send_status_t status)
 {
@@ -434,8 +486,10 @@ void setup() {
   pinMode(COIL_PIN_1, OUTPUT);
   digitalWrite(COIL_PIN_1, LOW);
 
-#if STAGE_COUNT > 1
+#if STAGE_COUNT > 1 || defined(CALIBRATION_MODE)
   pinMode(SENSOR_PIN_2, INPUT_PULLUP);
+#endif
+#if STAGE_COUNT > 1
   pinMode(COIL_PIN_2, OUTPUT);
   digitalWrite(COIL_PIN_2, LOW);
 #endif
@@ -447,7 +501,7 @@ void setup() {
   Serial.println("Startup");
 
   attachInterrupt(digitalPinToInterrupt(SENSOR_PIN_1), SensorInterrupt1, FALLING);
-#if STAGE_COUNT > 1
+#if STAGE_COUNT > 1 || defined(CALIBRATION_MODE)
     attachInterrupt(digitalPinToInterrupt(SENSOR_PIN_2), SensorInterrupt2, FALLING);
 #endif
 
@@ -531,8 +585,20 @@ void UpdateStageDelay()
     *StageTiming -= 1000;
   else if (gState.TurretTurnSpeed > 30)
     *StageTiming -= 250;
-  Serial.println("Stage timing = " + String(*StageTiming) + "us");
-  DebugPrint("Stage timing = " + String(*StageTiming) + "us");
+  if (gState.LeftSpeed < -220)
+    Delay_Stage2_On += 1000;
+  else if (gState.LeftSpeed < -30)
+    Delay_Stage2_On += 250;
+  else if (gState.LeftSpeed > 220)
+    Delay_Stage2_On -= 1000;
+  else if (gState.LeftSpeed > 30)
+    Delay_Stage2_On += 250;
+
+  if (gState.TurretTurnSpeed < -30 || gState.TurretTurnSpeed > 30 || gState.LeftSpeed < -30 || gState.LeftSpeed > 30)
+  {
+    Serial.println("on = " + String(*StageTiming) + " us, Stage 2 delay = " + String(Delay_Stage2_On) + " us");
+    DebugPrint("on = " + String(*StageTiming) + " us, Stage 2 delay = " + String(Delay_Stage2_On) + " us");
+  }
 }
 #endif
 
@@ -576,22 +642,26 @@ void loop() {
 #endif
       digitalWrite(BUILTIN_LED, LOW);
       Serial.println("Coil running too long, safety triggered\n");
+      DebugPrint("Coil running too long, safety triggered\n");
       DischargeCapacitors();
     }
   }
-  if (Complete && SensorTime1 > StartTime1)
-  {
-    Serial.println("Stage 1 took " + String(SensorTime1 - StartTime1) + " us");
-    DebugPrint("Stage 1 took " + String(SensorTime1 - StartTime1) + " us");
-    if (STAGE_COUNT > 1)
-    {
-      Serial.println("Stage 2 took " + String(SensorTime2 - StartTime2) + " us");
-      DebugPrint("Stage 2 took " + String(SensorTime2 - StartTime2) + " us");
-      Serial.println("Total time = " + String(SensorTime2 - StartTime1) + " us");
-      DebugPrint("Total time = " + String(SensorTime2 - StartTime1) + " us");
-    }
 
+#ifdef CALIBRATION_MODE
+  if (SensorTime2 > SensorTime1)
+  {
+    delay(500);
+    Serial.println("Timed " + String(SensorTime2 - SensorTime1) + " us");
+    DebugPrint("Timed " + String(SensorTime2 - SensorTime1) + " us");
+    Complete = false;
+    DischargeCapacitors();
+    SensorTime2 = SensorTime1 = 0;
+  }
+#else
+  if (Complete)
+  {
     Complete = false;
     DischargeCapacitors();
   }
+#endif
 }
