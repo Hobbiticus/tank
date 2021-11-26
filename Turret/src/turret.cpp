@@ -6,83 +6,75 @@
 #include <ESP32Servo.h>
 #include <esp32-hal-timer.h>
 typedef void (*ITimer_Callback) ();
+#define ARRAYSIZE(x) (sizeof(x) / sizeof(*x))
+
 
 #define ENABLE_DEBUGGING
 //#define USE_SENSORS
 #define STAGE_COUNT 2
 //#define CALIBRATION_MODE
 
-#ifndef CALIBRATION_MODE
-const
-#endif
-unsigned int LoaderLoadPos = 40;
-#ifndef CALIBRATION_MODE
-const
-#endif
-unsigned int LoaderReadyPos = 180;
+const unsigned int LoaderReadyPos = 180;
 
-#ifndef USE_SENSORS
-struct VoltageToTiming
+struct VoltageToFireParams
 {
   unsigned int m_Volts;
-  unsigned int m_Time;
+  unsigned char m_LoaderPos;
+  unsigned int m_ChargeTime;
+  unsigned int m_Stage1OnTime;
+  unsigned int m_InterStageTime;
+  unsigned int m_Stage2OnTime;
 };
-//fill this out!!
-VoltageToTiming Stage1OnTiming[5] =
-{
-  {50, 14000}, //14000 thin, 30 deg
-  {80, 10000},
-  {110, 10000}, //10000 thin, 40-50 deg
-  {140, 8000}, //9000 thin, 40 deg
-  {170, 1000}
-};
-VoltageToTiming Stage2OffTiming[5] =
-{
-  {50, 0},
-  {80, 0},
-  {110, 0},
-  {140, 0},
-  {170, 0}
-};
-VoltageToTiming Stage2OnTiming[5] =
-{
-  {50, 4500},
-  {80, 4500},
-  {110, 4500},
-  {140, 4500},  // only real one of this list
-  {170, 4500}
-};
-
-//for 140V!
-VoltageToTiming ChargeTimes[5] =
-{
-  {50, 250000},
-  {80, 500000},
-  {110, 700000},
-  {140, 1100000},
-  {170, 1000}
-};
-
-unsigned int Stage1OnTime = 8000;
-#if STAGE_COUNT > 1
-unsigned int Stage2OnTime = 4500;
-#endif
-#endif
-
-//...in microseconds
-#ifdef USE_SENSORS
-const unsigned int Delay_Stage1_Off = 0;
-const unsigned int Delay_Stage2_Off = 0;
-#endif
-unsigned int Delay_Stage2_On = 0;
-
 
 #ifdef CALIBRATION_MODE
-unsigned int* StageTiming = &Stage2OnTime;
-//unsigned int TimingVoltageIndex = 0;
-//VoltageToTiming* TimingStage = Stage1OnTiming;
+VoltageToFireParams FireParams =
+{
+//  V,  pos, charge, 1-on,  inter, 2-on
+   50,  30,  250000, 14000, 0,     4500
+};
+#define GET_FIRE_PARAM(VAR, PARAM) unsigned int VAR = FireParams.PARAM;
+
+//this is the parameter you want to adjust with the left stick
+unsigned int* LeftParam = &FireParams.m_Stage1OnTime;
+//this is the parameter you want to adjust with the right stick
+unsigned int* RightParam = &FireParams.m_Stage2OnTime;
+
+#else
+
+//fill this out!!
+//right now calibrated for 140V!
+VoltageToFireParams FireParams[4] =
+{
+//  V,  pos, charge, 1-on,  inter, 2-on
+  {50,  30,  250000, 14000, 0,     6000},
+  {80,  30,  500000, 10000, 0,     5500},
+  {110, 40,  700000, 10000, 0,     5000},
+  {140, 40, 1100000,  8000, 0,     4500}, //only one with 2-on that is valid
+//  {170, ...
+};
+int GetFireParamsIndex(int voltage)
+{
+  for (int i = 0; i < ARRAYSIZE(FireParams) - 1; i++)
+  {
+    if (voltage < FireParams[i + 1].m_Volts)
+      return i;
+  }
+  return ARRAYSIZE(FireParams) - 1;
+}
+#define GET_FIRE_PARAM(VAR, PARAM) \
+  unsigned int VAR; \
+  { \
+    int paramIndex = GetFireParamsIndex(ChargeVoltage); \
+    if (paramIndex == ARRAYSIZE(FireParams)-1) \
+      VAR = FireParams[paramIndex].PARAM; \
+    else \
+      VAR = map(ChargeVoltage, FireParams[paramIndex].m_Volts, FireParams[paramIndex+1].m_Volts, FireParams[paramIndex].PARAM, FireParams[paramIndex+1].PARAM); \
+  }
+
+
 #endif
 
+int ChargeVoltage = 140;
 
 class IRQTimer
 {
@@ -115,7 +107,6 @@ private:
 };
 IRQTimer ITimer(0);
 
-#define ARRAYSIZE(x) (sizeof(x) / sizeof(*x))
 
 const unsigned long LinkTimeoutUS = 2 * 1000 * 1000;
 
@@ -123,14 +114,15 @@ const unsigned long LinkTimeoutUS = 2 * 1000 * 1000;
 uint8_t PeerMac[6] = {0x24, 0x6F, 0x28, 0x17, 0xC1, 0x9C};
 #ifdef ENABLE_DEBUGGING
 uint8_t DebugMac[6] = {0x94, 0xB9, 0x7E, 0xDA, 0x01, 0x20};
+#endif
 
 void DebugPrint(String str)
 {
+    Serial.println(str);
+#ifdef ENABLE_DEBUGGING
     esp_now_send(DebugMac, (uint8_t*)str.c_str(), strlen(str.c_str()) + 1);
-}
-#else
-#define DebugPrint(x)
 #endif
+}
 
 
 
@@ -148,7 +140,6 @@ void DebugPrint(String str)
 #define CHARGE_PIN 22
 
 #define BUILTIN_LED 2
-//RX on logic level shifters!!
 #define TILT_PIN 26
 #define LOADER_PIN 27
 
@@ -195,8 +186,28 @@ volatile int LastSensor2Time = 0;
 volatile int LastChargeTimeUS = 0;
 
 volatile int LastRecvTimeUS = 0;
+enum
+{
+  TS_IDLE = 0,
+  TS_CHARGING,
+  TS_CHARGED,
+  TS_FIRING,
+} TurretState = TS_IDLE;
+
 volatile bool Shutdown = false;
-bool Charging = false;
+//bool Charging = false;
+
+void IRAM_ATTR TurnOffCharging(void)
+{
+  digitalWrite(CHARGE_PIN, LOW);
+  TurretState = TS_CHARGED;
+  DebugPrint("Charging complete");
+
+  //tell the RC that we are charged!
+  StatusMsg msg;
+  msg.ChargeState = 2;
+  esp_now_send(PeerMac, (uint8_t*)&msg, sizeof(msg));
+}
 
 #if STAGE_COUNT > 1
 void IRAM_ATTR TurnOffStage2(void)
@@ -204,6 +215,7 @@ void IRAM_ATTR TurnOffStage2(void)
   digitalWrite(COIL_PIN_2, LOW);
   digitalWrite(BUILTIN_LED, LOW);
   DebugPrint("Turning off stage 2");
+  TurretState = TS_IDLE;
   CurrentStage = 0;
   Complete = true;
 }
@@ -213,9 +225,13 @@ void IRAM_ATTR TurnOnStage2(void)
   digitalWrite(COIL_PIN_2, HIGH);
   StartTime2 = micros();
 #ifndef USE_SENSORS
-  ITimer.SetTimer(Stage2OnTime, TurnOffStage2, true);
+  GET_FIRE_PARAM(stage2OnTime, m_Stage2OnTime);
+  //unsigned int stage2OnTime = FireParams.m_Stage2OnTime;
+  
+  ITimer.SetTimer(stage2OnTime, TurnOffStage2, true);
+  DebugPrint("Stage 2 on time = " + String(stage2OnTime) + " us");
 #endif
-  DebugPrint("Turning on stage 2");
+  DebugPrint("Turned on stage 2");
 }
 #endif
 
@@ -229,18 +245,30 @@ void IRAM_ATTR TurnOffStage1(void)
 #if STAGE_COUNT > 1
   //start next stage
   CurrentStage = 2;
-  if (Delay_Stage2_On > 0)
+#ifdef CALIBRATION_MODE
+  int delayTime = FireParams.m_InterStageTime;
+#else
+  int paramIndex = GetFireParamsIndex(ChargeVoltage);
+  int delayTime = 0;
+  if (paramIndex == ARRAYSIZE(FireParams)-1)
+    delayTime = FireParams[paramIndex].m_InterStageTime;
+  else
+    delayTime = map(ChargeVoltage, FireParams[paramIndex].m_Volts, FireParams[paramIndex+1].m_Volts, FireParams[paramIndex].m_InterStageTime, FireParams[paramIndex+1].m_InterStageTime);
+#endif
+  
+  if (delayTime > 0)
   {
-    ITimer.SetTimer(Delay_Stage2_On, TurnOnStage2, true);
+    ITimer.SetTimer(delayTime, TurnOnStage2, true);
+    DebugPrint("Delaying stage 2 by " + String(delayTime) + " us");
     return;
   }
 
   TurnOnStage2();
 #else
   //no more stages - all done!
-  DebugPrint("Turning off stage 1");
   digitalWrite(BUILTIN_LED, LOW);
   CurrentStage = 0;
+  TurretState = TS_IDLE;
   Complete = true;
 #endif
 }
@@ -250,42 +278,50 @@ void OnTrigger()
   if (CurrentStage != 0)
     return;
 
+  //debouncing
   int when = micros();
   if (when - LastTriggerTime < 1000 * 1000)
     return;
+  LastTriggerTime = when;
+  DebugPrint("Trigger!");
 
-  if (Charging)
-  {
-    Serial.println("Charging OFF");
-    Charging = false;
-    digitalWrite(CHARGE_PIN, LOW);
-  }
+  //ALWAYS turn off charging
+  digitalWrite(CHARGE_PIN, LOW);
+  //return the loader to the ready position
   loader.write(LoaderReadyPos);
   
+  //tell the RC to no longer illuminate the charge LED
   StatusMsg msg;
   msg.ChargeState = false;
   esp_now_send(PeerMac, (uint8_t*)&msg, sizeof(msg));
 
-  DebugPrint("Trigger!");
-#ifdef CALIBRATION_MODE
-  Serial.println("Stage1 on = " + String(*StageTiming) + " us, Stage 2 delay = " + String(Delay_Stage2_On) + " us");
-  DebugPrint("Stage1 on = " + String(*StageTiming) + " us, Stage 2 delay = " + String(Delay_Stage2_On) + " us");
+#if !defined(USE_SENSORS) && !defined(CALIBRATION_MODE)
+  //figure out how long we need to run the first stage
+  unsigned int stage1OnTime = 1000;
+  int paramIndex = GetFireParamsIndex(ChargeVoltage);
+  if (paramIndex == ARRAYSIZE(FireParams) - 1)
+    stage1OnTime = FireParams[paramIndex].m_Stage1OnTime;
+  else
+    stage1OnTime = map(ChargeVoltage, FireParams[paramIndex].m_Volts, FireParams[paramIndex+1].m_Volts, FireParams[paramIndex].m_Stage1OnTime, FireParams[paramIndex+1].m_Stage1OnTime);
+  DebugPrint("Stage1 on = " + String(stage1OnTime) + " us");
 #endif
-
-  LastTriggerTime = when;
+  
 #ifdef CALIBRATION_MODE
+  DebugPrint("Stage1 on = " + String(FireParams.m_Stage1OnTime) + " us, inter stage = " + String(FireParams.m_InterStageTime) + " us, Stage 2 delay = " + String(FireParams.m_Stage2OnTime) + " us");
+  unsigned int stage1OnTime = FireParams.m_Stage1OnTime;
+
+  //make sure our timing vars are reset
   SensorTime2 = SensorTime1 = 1;
 #endif
-  Serial.println("Trigger pushed");
+
   digitalWrite(BUILTIN_LED, HIGH);
   CurrentStage = 1;
-  digitalWrite(CHARGE_PIN, LOW);
 
   StartTime1 = micros();
   digitalWrite(COIL_PIN_1, HIGH);
 
 #ifndef USE_SENSORS
-  ITimer.SetTimer(Stage1OnTime, TurnOffStage1, true);
+  ITimer.SetTimer(stage1OnTime, TurnOffStage1, true);
 #endif
 }
 
@@ -294,25 +330,59 @@ void OnCharge()
   if (CurrentStage != 0)
     return;
 
-  Charging = !Charging;
-  
-  if (Charging)
+  //debouncing
+  int when = micros();
+  if (when - LastChargeTimeUS < 200 * 1000)
+    return;
+  LastChargeTimeUS = when;
+  DebugPrint("Charge!");
+
+  if (TurretState == TS_CHARGING)
   {
-    StatusMsg msg;
-    msg.ChargeState = Charging;
-    esp_now_send(PeerMac, (uint8_t*)&msg, sizeof(msg));
-    loader.write(LoaderLoadPos);
-  }
-  
-  if (!Charging)
-  {
-    Serial.println("Charging OFF");
     digitalWrite(CHARGE_PIN, LOW);
+    TurretState = TS_CHARGED;
+    Serial.println("Turning off charging because button was pressed again");
     return;
   }
+  
+  if (TurretState != TS_IDLE)
+  {
+    Serial.println("Not allowed to charge while not idle");
+    return;
+  }
+
+  TurretState = TS_CHARGING;
+
+  //tell the RC that we are charging!
+  StatusMsg msg;
+  msg.ChargeState = 1;
+  esp_now_send(PeerMac, (uint8_t*)&msg, sizeof(msg));
+
+#ifndef CALIBRATION_MODE
+  ChargeVoltage = map(gState.PowerLevel, 0, 255, FireParams[0].m_Volts, FireParams[ARRAYSIZE(FireParams)-1].m_Volts);
+  DebugPrint("Charge voltage = " + String(ChargeVoltage));
+
+  //figure out how long we need to run the charger
+  unsigned int chargeTime = 1000;
+  int paramIndex = GetFireParamsIndex(ChargeVoltage);
+  if (paramIndex == ARRAYSIZE(FireParams) - 1)
+    chargeTime = FireParams[paramIndex].m_ChargeTime;
+  else
+    chargeTime = map(ChargeVoltage, FireParams[paramIndex].m_Volts, FireParams[paramIndex+1].m_Volts, FireParams[paramIndex].m_ChargeTime, FireParams[paramIndex+1].m_ChargeTime);
+  DebugPrint("Charge time = " + String(chargeTime) + " us");
+#endif
+
+  //move the loader
+  GET_FIRE_PARAM(loaderPos, m_LoaderPos)
+  loader.write(loaderPos);
+  DebugPrint("Loader pos = " + String(loaderPos));
+
   Serial.println("Charging ON");
-  LastChargeTimeUS = micros();
   digitalWrite(CHARGE_PIN, HIGH);
+
+#ifndef CALIBRATION_MODE
+  ITimer.SetTimer(chargeTime, TurnOffCharging, true);
+#endif
 }
 
 #ifdef CALIBRATION_MODE
@@ -336,13 +406,14 @@ void IRAM_ATTR SensorInterrupt2()
   SensorTime2 = when;
 }
 
-#else
+#endif
+#ifdef USE_SENSORS
+
 void IRAM_ATTR SensorInterrupt1()
 {
-#ifdef USE_SENSORS
   if (CurrentStage != 1)
     return;
-#endif
+
   int when = micros();
   if (when - LastSensor1Time < 200 * 1000)
     return;
@@ -350,23 +421,20 @@ void IRAM_ATTR SensorInterrupt1()
   LastSensor1Time = when;
   SensorTime1 = when;
 
-#ifdef USE_SENSORS
   if (Delay_Stage1_Off > 0)
   {
     ITimer.SetTimer(Delay_Stage1_Off, TurnOffStage1, true);
     return;
   }
   TurnOffStage1();
-#endif
 }
 
-#if STAGE_COUNT > 1 || defined(CALIBRATION_MODE)
+#if STAGE_COUNT > 1
 void IRAM_ATTR SensorInterrupt2()
 {
-#ifdef USE_SENSORS
   if (CurrentStage != 2)
     return;
-#endif
+
   int when = micros();
   if (when - LastSensor2Time < 200 * 1000)
     return;
@@ -374,14 +442,12 @@ void IRAM_ATTR SensorInterrupt2()
   LastSensor2Time = when;
   SensorTime2 = when;
 
-#ifdef USE_SENSORS
   if (Delay_Stage2_Off > 0)
   {
     ITimer.SetTimer(Delay_Stage2_Off, TurnOffStage2, true);
     return;
   }
   TurnOffStage2();
-#endif
 }
 #endif
 
@@ -389,7 +455,7 @@ void IRAM_ATTR SensorInterrupt2()
 
 void OnDataSent(const uint8_t *mac_addr, esp_now_send_status_t status)
 {
-  Serial.println(status == ESP_NOW_SEND_SUCCESS ? "Sent data!" : "Failed to send data");
+  //Serial.println(status == ESP_NOW_SEND_SUCCESS ? "Sent data!" : "Failed to send data");
 }
 
 void OnDataRecv(const uint8_t * mac, const uint8_t *incomingData, int len)
@@ -423,23 +489,12 @@ void OnDataRecv(const uint8_t * mac, const uint8_t *incomingData, int len)
     gState.PowerLevel = msg->PowerLevel;
   }
 #ifdef CALIBRATION_MODE
-  // static bool EverLoaded = false;
-  // if (!EverLoaded && !msg->ChargePressed)
-  // {
-  //   LoaderReadyPos = map(gState.PowerLevel, 0, 255, 180, 120);
-  //   Serial.println(String(gState.PowerLevel) + " = Ready pos = " + String(LoaderReadyPos));
-  //   DebugPrint(String(gState.PowerLevel) + " = Ready pos = " + String(LoaderReadyPos));
-  //   loader.write(LoaderReadyPos);
-  // }
-  // if (msg->ChargePressed)
-  //   EverLoaded = true;
   //set the position of the loader based on the "power level"
-  if (Charging)
+  if (TurretState == TS_CHARGING || TurretState == TS_CHARGED)
   {
-    LoaderLoadPos = map(gState.PowerLevel, 0, 255, 80, 5);
-    Serial.println("Load pos = " + String(LoaderLoadPos));
-    DebugPrint("Load pos = " + String(LoaderLoadPos));
-    loader.write(LoaderLoadPos);
+    FireParams.m_LoaderPos = map(gState.PowerLevel, 0, 255, 80, 5);
+    DebugPrint("Load pos = " + String(FireParams.m_LoaderPos));
+    loader.write(FireParams.m_LoaderPos);
   }
 #endif
   if (msg->ChargePressed != gState.ChargePressed)
@@ -500,9 +555,11 @@ void setup() {
   Serial.begin(115200);
   Serial.println("Startup");
 
+#if defined(USE_SENSORS) || defined(CALIBRATION_MODE)
   attachInterrupt(digitalPinToInterrupt(SENSOR_PIN_1), SensorInterrupt1, FALLING);
 #if STAGE_COUNT > 1 || defined(CALIBRATION_MODE)
     attachInterrupt(digitalPinToInterrupt(SENSOR_PIN_2), SensorInterrupt2, FALLING);
+#endif
 #endif
 
   WiFi.mode(WIFI_MODE_STA);
@@ -578,26 +635,26 @@ void UpdateStageDelay()
   LastUpdateTime += 1000;
 
   if (gState.TurretTurnSpeed < -220)
-    *StageTiming += 1000;
+    *RightParam += 1000;
   else if (gState.TurretTurnSpeed < -30)
-    *StageTiming += 250;
+    *RightParam += 250;
   else if (gState.TurretTurnSpeed > 220)
-    *StageTiming -= 1000;
+    *RightParam -= 1000;
   else if (gState.TurretTurnSpeed > 30)
-    *StageTiming -= 250;
+    *RightParam -= 250;
+
   if (gState.LeftSpeed < -220)
-    Delay_Stage2_On += 1000;
+    *LeftParam += 1000;
   else if (gState.LeftSpeed < -30)
-    Delay_Stage2_On += 250;
+    *LeftParam += 250;
   else if (gState.LeftSpeed > 220)
-    Delay_Stage2_On -= 1000;
+    *LeftParam -= 1000;
   else if (gState.LeftSpeed > 30)
-    Delay_Stage2_On += 250;
+    *LeftParam += 250;
 
   if (gState.TurretTurnSpeed < -30 || gState.TurretTurnSpeed > 30 || gState.LeftSpeed < -30 || gState.LeftSpeed > 30)
   {
-    Serial.println("on = " + String(*StageTiming) + " us, Stage 2 delay = " + String(Delay_Stage2_On) + " us");
-    DebugPrint("on = " + String(*StageTiming) + " us, Stage 2 delay = " + String(Delay_Stage2_On) + " us");
+    DebugPrint("left param = " + String(*LeftParam) + " us, right param = " + String(*RightParam) + " us");
   }
 }
 #endif
@@ -621,7 +678,7 @@ void loop() {
   {
     Serial.println("Where did the transmitter go!??");
     Shutdown = true;
-    Charging = false;
+    //Charging = false;
     CurrentStage = 0;
     digitalWrite(COIL_PIN_1, LOW);
 #if STAGE_COUNT > 1
@@ -630,7 +687,7 @@ void loop() {
     digitalWrite(CHARGE_PIN, LOW);
   }
 
-  if (CurrentStage != 0)
+/*  if (CurrentStage != 0)
   {
     //make sure we don't run too long
     if (when - StartTime1 > 500 * 1000)
@@ -645,7 +702,7 @@ void loop() {
       DebugPrint("Coil running too long, safety triggered\n");
       DischargeCapacitors();
     }
-  }
+  }*/
 
 #ifdef CALIBRATION_MODE
   if (SensorTime2 > SensorTime1)

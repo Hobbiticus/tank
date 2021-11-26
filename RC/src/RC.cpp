@@ -19,9 +19,14 @@
 #define CHARGE_LIGHT_PIN 13
 
 const int PWMFreq = 5000;
-const int LEDChannel = 0;
 const int LEDResolution = 8;
+
+const int LEDChannel = 0;
 const int LEDBrightness = 256 - 40;
+
+const int ChargeLEDChannel = 1;
+const int ChargeLEDHalfBrightness = 240;
+const int ChargeLEDFullBrightness = 0;
 
 unsigned int UpdateTimeMS = 100;
 unsigned int SparseUpdateFrequencyUS = 500 * 1000;
@@ -156,11 +161,17 @@ void OnDataRecv(const uint8_t * mac, const uint8_t *incomingData, int len)
     StatusMsg* msg = (StatusMsg*)incomingData;
     if (msg->ChargeState == 0)
     {
-      digitalWrite(CHARGE_LIGHT_PIN, HIGH);
+      //digitalWrite(CHARGE_LIGHT_PIN, HIGH);
+      ledcWrite(ChargeLEDChannel, 256);
+    }
+    else if (msg->ChargeState == 1)
+    {
+      ledcWrite(ChargeLEDChannel, ChargeLEDHalfBrightness);
     }
     else
     {
-      digitalWrite(CHARGE_LIGHT_PIN, LOW);
+      //digitalWrite(CHARGE_LIGHT_PIN, LOW);
+      ledcWrite(ChargeLEDChannel, ChargeLEDFullBrightness);
     }
   }
 }
@@ -303,14 +314,18 @@ void setup()
 
   //pinMode(POWER_LIGHT_PIN, OUTPUT);
   pinMode(LINK_LIGHT_PIN, OUTPUT);
-  pinMode(CHARGE_LIGHT_PIN, OUTPUT);
+  //pinMode(CHARGE_LIGHT_PIN, OUTPUT);
   //digitalWrite(POWER_LIGHT_PIN, LOW);
   digitalWrite(LINK_LIGHT_PIN, HIGH);
-  digitalWrite(CHARGE_LIGHT_PIN, HIGH);
+  //digitalWrite(CHARGE_LIGHT_PIN, HIGH);
 
   ledcSetup(LEDChannel, PWMFreq, LEDResolution);
   ledcAttachPin(POWER_LIGHT_PIN, LEDChannel);
   ledcWrite(LEDChannel, LEDBrightness);
+
+  ledcSetup(ChargeLEDChannel, PWMFreq, LEDResolution);
+  ledcAttachPin(CHARGE_LIGHT_PIN, ChargeLEDChannel);
+  ledcWrite(ChargeLEDChannel, 256);
 
   Serial.begin(115200);
   Serial.println(WiFi.macAddress());
@@ -355,7 +370,7 @@ void CheckRCPower()
 {
     int reading = analogRead(POWER_INPUT_PIN);
     //TODO: power calibration?
-    Serial.println("Power reading = " + String(reading));
+    //Serial.println("Power reading = " + String(reading));
     bool good = reading > 3000; //TODO: figure out this threshold
     if (!good && PowerRC)
     {
@@ -433,7 +448,7 @@ void loop()
   int16_t linear_y = StickToLinear(move_y, Y_MIN, Y_MAX, Y_DEAD_MIN, Y_DEAD_MAX);
   int16_t left = StickToLeft(linear_x, linear_y);
   int16_t right = StickToRight(linear_x, linear_y);
-  Serial.println("move_x = " + String(move_x) + ", move_y = " + String(move_y) + ", pan = " + String(pan) + ", tilt = " + String(tilt) + ", Charge = " + String(charge) + ", Trigger = " + String(trigger) + ", Pot = " + String(pot));
+  //Serial.println("move_x = " + String(move_x) + ", move_y = " + String(move_y) + ", pan = " + String(pan) + ", tilt = " + String(tilt) + ", Charge = " + String(charge) + ", Trigger = " + String(trigger) + ", Pot = " + String(pot));
   
   ////Serial.println("x = " + String(linear_x) + ", y = " + String(linear_y));
   ////Serial.println("Left = " + String(left) + ", Right = " + String(right));
@@ -445,7 +460,7 @@ void loop()
   gState.TurretTurnSpeed = StickToLinear(pan, PAN_MIN, PAN_MAX, PAN_DEAD_MIN, PAN_DEAD_MAX);
   gState.TurretTiltSpeed = StickToLinear(tilt, TILT_STICK_MIN, TILT_STICK_MAX, TILT_DEAD_MIN, TILT_DEAD_MAX);
   gState.PowerLevel = map(pot, 0, 4095, 255, 0);
-  Serial.println("X: " + String(linear_x) + "; Y: " + String(linear_y) + "; Pan: " + String(gState.TurretTurnSpeed) + "; Tilt: " + String(gState.TurretTiltSpeed) + "; Power = " + String(gState.PowerLevel));
+  //Serial.println("X: " + String(linear_x) + "; Y: " + String(linear_y) + "; Pan: " + String(gState.TurretTurnSpeed) + "; Tilt: " + String(gState.TurretTiltSpeed) + "; Power = " + String(gState.PowerLevel));
 
   //only send an update if something changed or it's been too long since the last update
   if (memcmp(&gState, &gLastState, sizeof(gState)) != 0 || micros() - gLastSendTime > SparseUpdateFrequencyUS)
