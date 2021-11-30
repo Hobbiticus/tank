@@ -265,13 +265,13 @@ int16_t StickToRight(int x, int y)
   //Serial.println("Angle = " + String(angle) + ", magnitude = " + String(magnitude));
     
   if (angle <= 90)
-    return -magnitude;
-  else if (angle <= 180)
-    return -map(angle, 90, 180, magnitude, -magnitude);
-  if (angle <= 270)
     return magnitude;
+  else if (angle <= 180)
+    return -map(angle, 90, 180, -magnitude, magnitude);
+  if (angle <= 270)
+    return -magnitude;
   else
-    return -map(angle, 270, 360, -magnitude, magnitude);
+    return map(angle, 270, 360, -magnitude, magnitude);
 }
 
 int16_t StickToLeft(int x, int y)
@@ -370,7 +370,7 @@ void CheckRCPower()
 {
     int reading = analogRead(POWER_INPUT_PIN);
     //TODO: power calibration?
-    //Serial.println("Power reading = " + String(reading));
+    Serial.println("Power reading = " + String(reading));
     bool good = reading > 3000; //TODO: figure out this threshold
     if (!good && PowerRC)
     {

@@ -17,12 +17,20 @@ uint8_t PeerMac[6] = {0x24, 0x6F, 0x28, 0x17, 0xC1, 0x9C};
 // #define LEFT_PWM_PIN 17
 // #define LEFT_FORWARD_PIN 16
 // #define LEFT_REVERSE_PIN 4
-#define RIGHT_PWM_PIN 18
-#define RIGHT_FORWARD_PIN 19
-#define RIGHT_REVERSE_PIN 21
-#define LEFT_PWM_PIN 4
-#define LEFT_FORWARD_PIN 16
-#define LEFT_REVERSE_PIN 17
+// #define RIGHT_PWM_PIN 18
+// #define RIGHT_FORWARD_PIN 19
+// #define RIGHT_REVERSE_PIN 21
+// #define LEFT_PWM_PIN 4
+// #define LEFT_FORWARD_PIN 16
+// #define LEFT_REVERSE_PIN 17
+
+#define RIGHT_PWM_PIN 4
+#define RIGHT_FORWARD_PIN 16
+#define RIGHT_REVERSE_PIN 17
+#define LEFT_PWM_PIN 18
+#define LEFT_FORWARD_PIN 19
+#define LEFT_REVERSE_PIN 21
+
 #define LEFT_CHANNEL 0
 #define RIGHT_CHANNEL 1
 #endif
@@ -210,6 +218,7 @@ void loop() {
     }
   
     //right speed
+    //the right motor is mounted "backwards", so reverse the direction
     if (RightSpeed == 0)
     {
       ledcWrite(RIGHT_CHANNEL, 0);
@@ -218,14 +227,14 @@ void loop() {
     }
     else if (RightSpeed > 0)
     {
-      digitalWrite(RIGHT_REVERSE_PIN, LOW);
-      digitalWrite(RIGHT_FORWARD_PIN, HIGH);
+      digitalWrite(RIGHT_REVERSE_PIN, HIGH);
+      digitalWrite(RIGHT_FORWARD_PIN, LOW);
       ledcWrite(RIGHT_CHANNEL, realRightSpeed);
     }
     else //gState.RightSpeed < 0
     {
-      digitalWrite(RIGHT_FORWARD_PIN, LOW);
-      digitalWrite(RIGHT_REVERSE_PIN, HIGH);
+      digitalWrite(RIGHT_FORWARD_PIN, HIGH);
+      digitalWrite(RIGHT_REVERSE_PIN, LOW);
       ledcWrite(RIGHT_CHANNEL, -realRightSpeed);
     }
 #endif
