@@ -12,7 +12,7 @@ typedef void (*ITimer_Callback) ();
 #define ENABLE_DEBUGGING
 //#define USE_SENSORS
 #define STAGE_COUNT 2
-//#define CALIBRATION_MODE
+#define CALIBRATION_MODE
 
 const unsigned int LoaderReadyPos = 180;
 
@@ -226,7 +226,6 @@ void IRAM_ATTR TurnOnStage2(void)
   StartTime2 = micros();
 #ifndef USE_SENSORS
   GET_FIRE_PARAM(stage2OnTime, m_Stage2OnTime);
-  //unsigned int stage2OnTime = FireParams.m_Stage2OnTime;
   
   ITimer.SetTimer(stage2OnTime, TurnOffStage2, true);
   DebugPrint("Stage 2 on time = " + String(stage2OnTime) + " us");
@@ -245,16 +244,7 @@ void IRAM_ATTR TurnOffStage1(void)
 #if STAGE_COUNT > 1
   //start next stage
   CurrentStage = 2;
-#ifdef CALIBRATION_MODE
-  int delayTime = FireParams.m_InterStageTime;
-#else
-  int paramIndex = GetFireParamsIndex(ChargeVoltage);
-  int delayTime = 0;
-  if (paramIndex == ARRAYSIZE(FireParams)-1)
-    delayTime = FireParams[paramIndex].m_InterStageTime;
-  else
-    delayTime = map(ChargeVoltage, FireParams[paramIndex].m_Volts, FireParams[paramIndex+1].m_Volts, FireParams[paramIndex].m_InterStageTime, FireParams[paramIndex+1].m_InterStageTime);
-#endif
+  GET_FIRE_PARAM(delayTime, m_InterStageTime);
   
   if (delayTime > 0)
   {
@@ -295,20 +285,13 @@ void OnTrigger()
   msg.ChargeState = false;
   esp_now_send(PeerMac, (uint8_t*)&msg, sizeof(msg));
 
-#if !defined(USE_SENSORS) && !defined(CALIBRATION_MODE)
-  //figure out how long we need to run the first stage
-  unsigned int stage1OnTime = 1000;
-  int paramIndex = GetFireParamsIndex(ChargeVoltage);
-  if (paramIndex == ARRAYSIZE(FireParams) - 1)
-    stage1OnTime = FireParams[paramIndex].m_Stage1OnTime;
-  else
-    stage1OnTime = map(ChargeVoltage, FireParams[paramIndex].m_Volts, FireParams[paramIndex+1].m_Volts, FireParams[paramIndex].m_Stage1OnTime, FireParams[paramIndex+1].m_Stage1OnTime);
+#if !defined(USE_SENSORS)
+  GET_FIRE_PARAM(stage1OnTime, m_Stage1OnTime);
   DebugPrint("Stage1 on = " + String(stage1OnTime) + " us");
 #endif
   
 #ifdef CALIBRATION_MODE
   DebugPrint("Stage1 on = " + String(FireParams.m_Stage1OnTime) + " us, inter stage = " + String(FireParams.m_InterStageTime) + " us, Stage 2 delay = " + String(FireParams.m_Stage2OnTime) + " us");
-  unsigned int stage1OnTime = FireParams.m_Stage1OnTime;
 
   //make sure our timing vars are reset
   SensorTime2 = SensorTime1 = 1;
@@ -363,12 +346,7 @@ void OnCharge()
   DebugPrint("Charge voltage = " + String(ChargeVoltage));
 
   //figure out how long we need to run the charger
-  unsigned int chargeTime = 1000;
-  int paramIndex = GetFireParamsIndex(ChargeVoltage);
-  if (paramIndex == ARRAYSIZE(FireParams) - 1)
-    chargeTime = FireParams[paramIndex].m_ChargeTime;
-  else
-    chargeTime = map(ChargeVoltage, FireParams[paramIndex].m_Volts, FireParams[paramIndex+1].m_Volts, FireParams[paramIndex].m_ChargeTime, FireParams[paramIndex+1].m_ChargeTime);
+  GET_FIRE_PARAM(chargeTime, m_ChargeTime);
   DebugPrint("Charge time = " + String(chargeTime) + " us");
 #endif
 
@@ -492,9 +470,13 @@ void OnDataRecv(const uint8_t * mac, const uint8_t *incomingData, int len)
   //set the position of the loader based on the "power level"
   if (TurretState == TS_CHARGING || TurretState == TS_CHARGED)
   {
-    FireParams.m_LoaderPos = map(gState.PowerLevel, 0, 255, 80, 5);
-    DebugPrint("Load pos = " + String(FireParams.m_LoaderPos));
-    loader.write(FireParams.m_LoaderPos);
+    uint8_t loaderPos = map(gState.PowerLevel, 0, 255, 80, 0);
+    if (loaderPos != FireParams.m_LoaderPos)
+    {
+      FireParams.m_LoaderPos = loaderPos;
+      DebugPrint("Load pos = " + String(FireParams.m_LoaderPos));
+      loader.write(FireParams.m_LoaderPos);
+    }
   }
 #endif
   if (msg->ChargePressed != gState.ChargePressed)
