@@ -12,7 +12,7 @@ typedef void (*ITimer_Callback) ();
 #define ENABLE_DEBUGGING
 //#define USE_SENSORS
 #define STAGE_COUNT 2
-#define CALIBRATION_MODE
+//#define CALIBRATION_MODE
 
 const unsigned int LoaderReadyPos = 180;
 
@@ -30,7 +30,7 @@ struct VoltageToFireParams
 VoltageToFireParams FireParams =
 {
 //  V,  pos, charge, 1-on,  inter, 2-on
-   50,  30,  250000, 14000, 0,     4500
+   60,  30,  250000, 14000, 0,     4500
 };
 #define GET_FIRE_PARAM(VAR, PARAM) unsigned int VAR = FireParams.PARAM;
 
@@ -41,16 +41,18 @@ unsigned int* RightParam = &FireParams.m_Stage2OnTime;
 
 #else
 
-//fill this out!!
-//right now calibrated for 140V!
-VoltageToFireParams FireParams[4] =
+//inter stage appears to always be 0!
+//2-on isn't really calibrated fully.  Darts keep getting destroyed after only a few shots, so we're just going to go with this.
+//180V was "tested" but not very well, and 60V was tested well
+//Both were about 0.6 * the 1st stage time, so the rest of the 2nd stage times are roughly 0.6 * the 1st stage times
+VoltageToFireParams FireParams[5] =
 {
 //  V,  pos, charge, 1-on,  inter, 2-on
-  {50,  30,  250000, 14000, 0,     6000},
-  {80,  30,  500000, 10000, 0,     5500},
-  {110, 40,  700000, 10000, 0,     5000},
-  {140, 40, 1100000,  8000, 0,     4500}, //only one with 2-on that is valid
-//  {170, ...
+  {60,  15,  200000, 13500, 0,     9000}, //actually calibrated
+  {90,  20,  430000, 10000, 0,     6000},
+  {120, 40,  760000,  8500, 0,     5000},
+  {150, 43, 1150000,  7500, 0,     4500},
+  {180, 45, 2000000,  6500, 0,     4000} //good! maybe?
 };
 int GetFireParamsIndex(int voltage)
 {
